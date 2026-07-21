@@ -1,0 +1,68 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+model Profesional {
+  id                    String          @id @default(uuid())
+  nombre                String
+  email                 String          @unique
+  passwordHash          String
+  role                  String          @default("BARBER") // BARBER, OWNER
+  horarioAtencionInicio String          // "09:00"
+  horarioAtencionFin    String          // "19:00"
+  imagenUrl             String?
+  canEditServices       Boolean         @default(false)
+  turnos                Turno[]
+  bloques               BloqueHorario[]
+}
+
+model Servicio {
+  id              String   @id @default(uuid())
+  nombre          String
+  duracionMinutos Int
+  precio          Float
+  turnos          Turno[]
+}
+
+model Turno {
+  id             String      @id @default(uuid())
+  profesionalId  String
+  profesional    Profesional @relation(fields: [profesionalId], references: [id])
+  servicioId     String
+  servicio       Servicio    @relation(fields: [servicioId], references: [id])
+  fecha          String      // "yyyy-MM-dd"
+  horaInicio     String      // "HH:mm"
+  horaFin        String      // "HH:mm"
+  clienteNombre  String
+  clienteTelefono String
+  estado         String      @default("PENDIENTE") // PENDIENTE, CONFIRMADO, CANCELADO
+  createdAt      DateTime    @default(now())
+}
+
+model BloqueHorario {
+  id            String      @id @default(uuid())
+  profesionalId String
+  profesional   Profesional @relation(fields: [profesionalId], references: [id])
+  fecha         String      // "yyyy-MM-dd"
+  horaInicio    String      // "HH:mm"
+  horaFin       String      // "HH:mm"
+  motivo        String?
+  createdAt     DateTime    @default(now())
+}
+
+model Configuracion {
+  id               String  @id @default("global")
+  nombreLocal      String  @default("Estilo Cruz")
+  logoUrl          String  @default("/logo.png")
+  telefonoContacto String  @default("+54 9 11 3414-1804")
+  diasAbiertos     String  @default("1,2,3,4,5,6")
+}

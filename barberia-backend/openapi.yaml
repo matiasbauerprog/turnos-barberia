@@ -1,0 +1,697 @@
+openapi: 3.0.3
+info:
+  title: Estilo Cruz — API de Turnos
+  version: 1.0.1
+  description: >
+    API REST para la gestión de turnos de una barbería. Permite a los clientes
+    reservar turnos (consultando servicios, profesionales y disponibilidad) y al
+    personal administrar turnos, servicios, staff, clientes y bloqueos de horario.
+
+    La autenticación de los endpoints de administración se hace con JWT (Bearer token)
+    obtenido en `POST /api/auth/login`.
+  contact:
+    name: Command Soluciones
+    url: https://www.commandsoluciones.com.ar
+
+servers:
+  - url: http://localhost:3001
+    description: Desarrollo local
+  - url: https://turnosestilocruz.vercel.app
+    description: Producción (ejemplo)
+
+tags:
+  - name: Público
+    description: Endpoints que consume el cliente para reservar un turno.
+  - name: Autenticación
+    description: Login del personal.
+  - name: Admin - Turnos
+  - name: Admin - Servicios
+  - name: Admin - Staff
+  - name: Admin - Clientes
+  - name: Admin - Bloqueos
+  - name: Admin - Configuración
+
+paths:
+  /:
+    get:
+      tags: [Público]
+      summary: Estado de la API
+      security: []
+      responses:
+        '200':
+          description: La API está online.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: API Online }
+                  version: { type: string, example: 1.0.1 }
+
+  /api/servicios:
+    get:
+      tags: [Público]
+      summary: Listar servicios disponibles
+      security: []
+      responses:
+        '200':
+          description: Lista de servicios.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Servicio' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/config:
+    get:
+      tags: [Público]
+      summary: Obtener la configuración global del local
+      description: Devuelve nombre, logo, teléfono y días abiertos. Se crea con valores por defecto si no existe.
+      security: []
+      responses:
+        '200':
+          description: Configuración del local.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Configuracion' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/profesionales:
+    get:
+      tags: [Público]
+      summary: Listar profesionales (barberos)
+      security: []
+      responses:
+        '200':
+          description: Lista de profesionales (sin datos sensibles).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProfesionalPublico' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/disponibilidad:
+    get:
+      tags: [Público]
+      summary: Calcular horarios disponibles
+      description: >
+        Devuelve los horarios libres ("HH:mm") para un profesional en una fecha,
+        considerando la duración del servicio, los turnos ya reservados y los bloqueos.
+      security: []
+      parameters:
+        - { in: query, name: fecha, required: true, schema: { type: string, format: date }, example: "2026-07-20" }
+        - { in: query, name: servicioId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: profesionalId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Lista de horarios disponibles.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  slots:
+                    type: array
+                    items: { type: string, example: "14:30" }
+        '400': { $ref: '#/components/responses/ParametrosFaltantes' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/cliente/{telefono}:
+    get:
+      tags: [Público]
+      summary: Buscar nombre de cliente por teléfono
+      description: Autocompleta el nombre de un cliente recurrente a partir de su último turno.
+      security: []
+      parameters:
+        - { in: path, name: telefono, required: true, schema: { type: string }, example: "1155555555" }
+      responses:
+        '200':
+          description: Nombre del cliente (o null si no existe).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nombre: { type: string, nullable: true, example: "Juan Pérez" }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/turnos:
+    post:
+      tags: [Público]
+      summary: Reservar un turno
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NuevoTurno' }
+      responses:
+        '201':
+          description: Turno creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Turno' }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Login del personal
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, example: facundo@barberia.com }
+                password: { type: string, format: password, example: admin123 }
+      responses:
+        '200':
+          description: Login correcto. Devuelve token JWT y datos del profesional.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: JWT válido por 8 horas }
+                  profesional: { $ref: '#/components/schemas/ProfesionalPublico' }
+        '401': { $ref: '#/components/responses/CredencialesInvalidas' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/config:
+    put:
+      tags: [Admin - Configuración]
+      summary: Actualizar configuración global (solo OWNER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nombreLocal: { type: string }
+                logoUrl: { type: string }
+                telefonoContacto: { type: string }
+                diasAbiertos: { type: string, example: "1,2,3,4,5,6" }
+      responses:
+        '200':
+          description: Configuración actualizada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Configuracion' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/turnos:
+    get:
+      tags: [Admin - Turnos]
+      summary: Listar turnos del profesional autenticado
+      parameters:
+        - { in: query, name: fecha, required: false, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Lista de turnos (incluye el servicio).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Turno' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/turnos/{id}:
+    delete:
+      tags: [Admin - Turnos]
+      summary: Cancelar (eliminar) un turno
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/MensajeOk' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/turnos/{id}/estado:
+    patch:
+      tags: [Admin - Turnos]
+      summary: Cambiar el estado de un turno
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estado]
+              properties:
+                estado:
+                  type: string
+                  enum: [PENDIENTE, CONFIRMADO, CANCELADO, ASISTIO]
+      responses:
+        '200':
+          description: Turno actualizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Turno' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/clientes:
+    get:
+      tags: [Admin - Clientes]
+      summary: Listar clientes con estadísticas (solo OWNER)
+      responses:
+        '200':
+          description: Clientes agregados por teléfono.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ClienteResumen' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/clientes/{telefono}/historial:
+    get:
+      tags: [Admin - Clientes]
+      summary: Historial de turnos de un cliente (solo OWNER)
+      parameters:
+        - { in: path, name: telefono, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Turnos del cliente (con servicio y profesional).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Turno' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/perfil:
+    put:
+      tags: [Admin - Staff]
+      summary: Actualizar el perfil del profesional autenticado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nombre: { type: string }
+                email: { type: string, format: email }
+                horarioAtencionInicio: { type: string, example: "09:00" }
+                horarioAtencionFin: { type: string, example: "19:00" }
+                imagenUrl: { type: string }
+                password: { type: string, format: password, description: Opcional. Si se envía, se actualiza la contraseña. }
+      responses:
+        '200':
+          description: Perfil actualizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfesionalPublico' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/servicios:
+    get:
+      tags: [Admin - Servicios]
+      summary: Listar servicios (OWNER o con permiso canEditServices)
+      responses:
+        '200':
+          description: Lista de servicios.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Servicio' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+    post:
+      tags: [Admin - Servicios]
+      summary: Crear un servicio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NuevoServicio' }
+      responses:
+        '200':
+          description: Servicio creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Servicio' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+
+  /api/admin/servicios/{id}:
+    put:
+      tags: [Admin - Servicios]
+      summary: Actualizar un servicio
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NuevoServicio' }
+      responses:
+        '200':
+          description: Servicio actualizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Servicio' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+    delete:
+      tags: [Admin - Servicios]
+      summary: Eliminar un servicio
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/MensajeOk' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+
+  /api/admin/staff:
+    get:
+      tags: [Admin - Staff]
+      summary: Listar el personal (solo OWNER)
+      responses:
+        '200':
+          description: Lista de profesionales.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProfesionalPublico' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+    post:
+      tags: [Admin - Staff]
+      summary: Crear un profesional (solo OWNER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NuevoStaff' }
+      responses:
+        '200':
+          description: Profesional creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profesional' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+
+  /api/admin/staff/{id}:
+    put:
+      tags: [Admin - Staff]
+      summary: Actualizar un profesional (solo OWNER)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NuevoStaff' }
+      responses:
+        '200':
+          description: Profesional actualizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profesional' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+    delete:
+      tags: [Admin - Staff]
+      summary: Eliminar un profesional (solo OWNER)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/MensajeOk' }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+
+  /api/admin/staff/{id}/permissions:
+    patch:
+      tags: [Admin - Staff]
+      summary: Cambiar el permiso de edición de servicios (solo OWNER)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [canEditServices]
+              properties:
+                canEditServices: { type: boolean }
+      responses:
+        '200':
+          description: Permiso actualizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profesional' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+
+  /api/admin/bloques:
+    get:
+      tags: [Admin - Bloqueos]
+      summary: Listar bloqueos de horario del profesional autenticado
+      parameters:
+        - { in: query, name: fecha, required: false, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Lista de bloqueos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BloqueHorario' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+    post:
+      tags: [Admin - Bloqueos]
+      summary: Crear un bloqueo de horario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fecha, horaInicio, horaFin]
+              properties:
+                fecha: { type: string, format: date }
+                horaInicio: { type: string, example: "13:00" }
+                horaFin: { type: string, example: "14:00" }
+                motivo: { type: string, nullable: true, example: "Almuerzo" }
+      responses:
+        '201':
+          description: Bloqueo creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BloqueHorario' }
+        '400': { $ref: '#/components/responses/ParametrosFaltantes' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+  /api/admin/bloques/{id}:
+    delete:
+      tags: [Admin - Bloqueos]
+      summary: Eliminar un bloqueo de horario
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/MensajeOk' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Servicio:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        nombre: { type: string, example: "Corte + Barba" }
+        duracionMinutos: { type: integer, example: 45 }
+        precio: { type: number, format: float, example: 7500 }
+
+    NuevoServicio:
+      type: object
+      required: [nombre, duracionMinutos, precio]
+      properties:
+        nombre: { type: string, example: "Corte Clásico" }
+        duracionMinutos: { type: integer, example: 30 }
+        precio: { type: number, format: float, example: 5000 }
+
+    ProfesionalPublico:
+      type: object
+      description: Datos de un profesional sin campos sensibles (sin passwordHash).
+      properties:
+        id: { type: string, format: uuid }
+        nombre: { type: string, example: "Facundo" }
+        email: { type: string, format: email }
+        role: { type: string, enum: [OWNER, BARBER] }
+        canEditServices: { type: boolean }
+        horarioAtencionInicio: { type: string, example: "09:00" }
+        horarioAtencionFin: { type: string, example: "19:00" }
+        imagenUrl: { type: string, nullable: true }
+
+    Profesional:
+      allOf:
+        - $ref: '#/components/schemas/ProfesionalPublico'
+        - type: object
+          properties:
+            passwordHash:
+              type: string
+              description: Hash bcrypt. Nunca se expone en los endpoints públicos.
+
+    NuevoStaff:
+      type: object
+      required: [nombre, email, password, role, horarioAtencionInicio, horarioAtencionFin]
+      properties:
+        nombre: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+        role: { type: string, enum: [OWNER, BARBER] }
+        horarioAtencionInicio: { type: string, example: "09:00" }
+        horarioAtencionFin: { type: string, example: "19:00" }
+        canEditServices: { type: boolean }
+
+    NuevoTurno:
+      type: object
+      required: [servicioId, profesionalId, fecha, horaInicio, clienteNombre, clienteTelefono]
+      properties:
+        servicioId: { type: string, format: uuid }
+        profesionalId: { type: string, format: uuid }
+        fecha: { type: string, format: date, example: "2026-07-20" }
+        horaInicio: { type: string, example: "14:30" }
+        clienteNombre: { type: string, example: "Juan Pérez" }
+        clienteTelefono: { type: string, example: "1155555555" }
+
+    Turno:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        profesionalId: { type: string, format: uuid }
+        servicioId: { type: string, format: uuid }
+        fecha: { type: string, format: date }
+        horaInicio: { type: string, example: "14:30" }
+        horaFin: { type: string, example: "15:15" }
+        clienteNombre: { type: string }
+        clienteTelefono: { type: string }
+        estado: { type: string, enum: [PENDIENTE, CONFIRMADO, CANCELADO, ASISTIO] }
+        createdAt: { type: string, format: date-time }
+        servicio: { $ref: '#/components/schemas/Servicio' }
+
+    BloqueHorario:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        profesionalId: { type: string, format: uuid }
+        fecha: { type: string, format: date }
+        horaInicio: { type: string, example: "13:00" }
+        horaFin: { type: string, example: "14:00" }
+        motivo: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    Configuracion:
+      type: object
+      properties:
+        id: { type: string, example: "global" }
+        nombreLocal: { type: string, example: "Estilo Cruz" }
+        logoUrl: { type: string, example: "/logo.png" }
+        telefonoContacto: { type: string, example: "+54 9 11 3414-1804" }
+        diasAbiertos: { type: string, example: "1,2,3,4,5,6" }
+
+    ClienteResumen:
+      type: object
+      properties:
+        telefono: { type: string }
+        nombre: { type: string }
+        totalTurnos: { type: integer }
+        ultimoTurno: { type: string, format: date-time }
+        completados: { type: integer }
+        cancelados: { type: integer }
+        pendientes: { type: integer }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+  responses:
+    ErrorInterno:
+      description: Error interno del servidor.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ParametrosFaltantes:
+      description: Faltan parámetros requeridos.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    DatosInvalidos:
+      description: Datos inválidos en la petición.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NoEncontrado:
+      description: El recurso no existe.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NoAutorizado:
+      description: Falta el token o es inválido.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Prohibido:
+      description: El usuario autenticado no tiene permisos para esta acción.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    CredencialesInvalidas:
+      description: Email o contraseña incorrectos.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    MensajeOk:
+      description: Operación exitosa.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Operación realizada con éxito" }
+
+security:
+  - bearerAuth: []
